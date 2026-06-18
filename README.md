@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo.svg" width="88" alt="redactr-community logo" /></p>
+
 # redactr-community
 
 [![CI](https://github.com/redactrai/redactr-community/actions/workflows/ci.yml/badge.svg)](https://github.com/redactrai/redactr-community/actions/workflows/ci.yml)
