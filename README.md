@@ -14,15 +14,29 @@ requests before they leave your machine.
 Part of [Redactr](https://redactrai.com). The community edition is regex-only; the full
 product adds statistical + ML detection, agent sandboxing, and a team control plane.
 
-## Install
-Download a binary from Releases, or `go install github.com/redactrai/redactr-community@latest`.
+## Quick start
 
-## Usage
-```
-redactr-community            # start the proxy + print CA-trust instructions
-redactr-community shell      # subshell with HTTPS_PROXY preset
-redactr-community telemetry status
-```
+1. **Get the binary** — download for your OS from the
+   **[latest release ⬇](https://github.com/redactrai/redactr-community/releases/latest)**, or build with Go:
+   ```
+   go install github.com/redactrai/redactr-community/cmd/redactr-community@latest
+   ```
+2. **Start it** (creates a local CA on first run):
+   ```
+   redactr-community
+   ```
+3. **Trust the CA** once — follow the per-OS instructions it prints.
+4. **Route your AI tools through it:**
+   ```
+   export HTTPS_PROXY=http://127.0.0.1:8080
+   # or:  redactr-community shell   # opens a subshell with the proxy preset
+   ```
+   Outbound secrets/PII are now redacted before they leave your machine.
+
+Other commands: `redactr-community ca` (print CA trust steps) · `redactr-community telemetry on|off|status`.
+
+**Downloads:** every tagged release publishes macOS / Linux / Windows binaries on the
+**[Releases page](https://github.com/redactrai/redactr-community/releases)**.
 
 ## Privacy
 Your code, traffic, and redacted values **never** leave your machine. The only thing that
