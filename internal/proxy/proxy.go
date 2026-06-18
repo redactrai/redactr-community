@@ -51,6 +51,38 @@ func (h *bodyHandler) handleBody(body []byte) ([]byte, int, error) {
 		return body, 0, nil
 	}
 
+	if msg.IsArray {
+		// Redact each text-bearing part independently to avoid any
+		// separator-split ambiguity when part text itself contains newlines.
+		total := 0
+		redactedParts := make([]string, len(msg.PartTexts))
+		for i, pt := range msg.PartTexts {
+			if pt == "" {
+				// Part carries no text (e.g. empty tool_result); preserve as-is.
+				redactedParts[i] = pt
+				continue
+			}
+			redacted, n, rerr := h.redact(pt)
+			if rerr != nil {
+				slog.Warn("redact error on part, forwarding unredacted", "part", i, "error", rerr)
+				redactedParts[i] = pt
+				continue
+			}
+			redactedParts[i] = redacted
+			total += n
+		}
+		if total == 0 {
+			return body, 0, nil
+		}
+		newBody, err := ReplaceLastUserMessage(body, msg, "", redactedParts)
+		if err != nil {
+			slog.Warn("body rewrite failed", "error", err)
+			return body, 0, nil
+		}
+		return newBody, total, nil
+	}
+
+	// String-content path: redact the whole string at once.
 	redactedText, n, err := h.redact(msg.Text)
 	if err != nil {
 		slog.Warn("redact error, forwarding unredacted", "error", err)
@@ -62,7 +94,7 @@ func (h *bodyHandler) handleBody(body []byte) ([]byte, int, error) {
 		return body, 0, nil
 	}
 
-	newBody, err := ReplaceLastUserMessage(body, msg, redactedText)
+	newBody, err := ReplaceLastUserMessage(body, msg, redactedText, nil)
 	if err != nil {
 		slog.Warn("body rewrite failed", "error", err)
 		return body, 0, nil
@@ -85,14 +117,10 @@ func New(ca *certgen.CA, redact func(string) (string, int, error), onRedact func
 		return nil, fmt.Errorf("build CA TLS cert: %w", err)
 	}
 
-	// Wire our CA into goproxy's global MITM state.
+	// Wire our CA into goproxy's global MITM signing state.
+	// NOTE: GoproxyCa is a process-global in goproxy v1.8.3; there is no
+	// per-instance CA. This is a known limitation of the library.
 	goproxy.GoproxyCa = tlsCert
-	tlsConfigFn := goproxy.TLSConfigFromCA(&goproxy.GoproxyCa)
-
-	// Override the three connect actions to all use our CA.
-	goproxy.OkConnect = &goproxy.ConnectAction{Action: goproxy.ConnectMitm, TLSConfig: tlsConfigFn}
-	goproxy.MitmConnect = &goproxy.ConnectAction{Action: goproxy.ConnectMitm, TLSConfig: tlsConfigFn}
-	goproxy.RejectConnect = &goproxy.ConnectAction{Action: goproxy.ConnectReject}
 
 	bh := newBodyHandler(redact)
 
@@ -117,6 +145,7 @@ func New(ca *certgen.CA, redact func(string) (string, int, error), onRedact func
 		req.Body.Close()
 		if err != nil {
 			req.Body = io.NopCloser(bytes.NewReader(body))
+			ctx.UserData = statusPassthrough
 			return req, nil
 		}
 

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/redactrai/redactr-community/internal/scanner"
 )
 
 // fakeRedact is a simple redact func for testing: replaces "SECRET" with "[REDACTED-SECRET]".
@@ -188,5 +190,30 @@ func TestHandleBody_MultipleSecretsRedacted(t *testing.T) {
 	// The original surrounding context must be gone.
 	if strings.Contains(string(out), "First SECRET and") {
 		t.Errorf("output body still contains unredacted 'First SECRET and': %s", out)
+	}
+}
+
+// TestHandleBody_ArrayPartsWithNewlineAndEmptyToolResult is a regression test
+// for two bugs that occurred together:
+//  1. Newline join/split: joining array parts with "\n" then splitting on "\n"
+//     to redistribute corrupted output when a part's text contained a literal newline.
+//  2. tool_result asymmetry: an empty tool_result before a text part shifted the
+//     rewrite index and left the secret in the wrong (or dropped) part.
+func TestHandleBody_ArrayPartsWithNewlineAndEmptyToolResult(t *testing.T) {
+	body := []byte(`{"messages":[{"role":"user","content":[{"type":"tool_result","content":""},{"type":"text","text":"line1\nkey AKIA1234567890ABCD12 line2"}]}]}`)
+	h := newBodyHandler(scanner.New().Redact)
+	out, n, err := h.handleBody(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n < 1 {
+		t.Fatalf("expected a redaction, got %d", n)
+	}
+	s := string(out)
+	if strings.Contains(s, "AKIA1234567890ABCD12") {
+		t.Errorf("secret survived: %s", s)
+	}
+	if !strings.Contains(s, "line1") || !strings.Contains(s, "line2") {
+		t.Errorf("content truncated (newline bug): %s", s)
 	}
 }

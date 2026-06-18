@@ -3,18 +3,23 @@ package proxy
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 )
 
 // ExtractedMessage holds the extracted user message text and the metadata
 // needed to reconstruct (rewrite) the body after redaction.
 type ExtractedMessage struct {
 	// Text is the concatenated plaintext of the user message.
+	// For array content this is only used to signal non-emptiness; actual
+	// per-part redaction uses PartTexts / ContentParts directly.
 	Text string
 	// Index is the position of this message in the messages array.
 	Index int
 	// ContentParts holds the parsed parts when content was a JSON array.
 	ContentParts []ContentPart
+	// PartTexts holds the original extractable text for each ContentPart, in
+	// the same order as ContentParts. An empty string means the part has no
+	// text to redact (e.g. an empty tool_result).
+	PartTexts []string
 	// IsArray is true when the original content was an array of parts.
 	IsArray bool
 }
@@ -58,23 +63,30 @@ func ExtractLastUserMessage(body []byte) (*ExtractedMessage, error) {
 		}
 
 		// Try array-of-parts content.
+		// Each text-bearing part is stored independently in PartTexts so that
+		// rewriting never needs to split on a separator character (which would
+		// corrupt part text that itself contains that character).
 		var parts []ContentPart
 		if err := json.Unmarshal(msg.Content, &parts); err == nil {
-			var texts []string
-			for _, p := range parts {
+			partTexts := make([]string, len(parts))
+			combined := ""
+			for j, p := range parts {
 				switch p.Type {
 				case "text":
-					texts = append(texts, p.Text)
+					partTexts[j] = p.Text
+					combined += p.Text
 				case "tool_result":
-					if p.Content != "" {
-						texts = append(texts, p.Content)
-					}
+					// Only populate PartTexts for non-empty tool_result content;
+					// empty entries are left as "" so rewrite skips them too.
+					partTexts[j] = p.Content
+					combined += p.Content
 				}
 			}
 			return &ExtractedMessage{
-				Text:         strings.Join(texts, "\n"),
+				Text:         combined,
 				Index:        i,
 				ContentParts: parts,
+				PartTexts:    partTexts,
 				IsArray:      true,
 			}, nil
 		}

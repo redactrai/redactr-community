@@ -2,12 +2,15 @@ package proxy
 
 import (
 	"encoding/json"
-	"strings"
 )
 
 // ReplaceLastUserMessage rebuilds the JSON body, replacing the text of the
-// message described by msg with redactedText. It returns the new JSON bytes.
-func ReplaceLastUserMessage(body []byte, msg *ExtractedMessage, redactedText string) ([]byte, error) {
+// message described by msg with the per-part redacted texts in redactedParts
+// (for array content) or with redactedText (for string content).
+//
+// For array content, redactedParts must be the same length as msg.PartTexts;
+// each entry is the redacted version of the corresponding msg.PartTexts entry.
+func ReplaceLastUserMessage(body []byte, msg *ExtractedMessage, redactedText string, redactedParts []string) ([]byte, error) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, err
@@ -19,26 +22,19 @@ func ReplaceLastUserMessage(body []byte, msg *ExtractedMessage, redactedText str
 	}
 
 	if msg.IsArray {
-		// Re-distribute the redacted text back into the parts.
-		redactedParts := make([]ContentPart, len(msg.ContentParts))
-		texts := strings.Split(redactedText, "\n")
-		textIdx := 0
+		// Rebuild the parts array, substituting each part's redacted text.
+		// redactedParts is parallel to msg.ContentParts / msg.PartTexts.
+		rebuilt := make([]ContentPart, len(msg.ContentParts))
 		for i, p := range msg.ContentParts {
-			redactedParts[i] = p
+			rebuilt[i] = p
 			switch p.Type {
 			case "text":
-				if textIdx < len(texts) {
-					redactedParts[i].Text = texts[textIdx]
-					textIdx++
-				}
+				rebuilt[i].Text = redactedParts[i]
 			case "tool_result":
-				if textIdx < len(texts) {
-					redactedParts[i].Content = texts[textIdx]
-					textIdx++
-				}
+				rebuilt[i].Content = redactedParts[i]
 			}
 		}
-		partBytes, err := json.Marshal(redactedParts)
+		partBytes, err := json.Marshal(rebuilt)
 		if err != nil {
 			return nil, err
 		}
