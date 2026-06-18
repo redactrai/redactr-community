@@ -1,5 +1,12 @@
 # redactr-community
 
+[![CI](https://github.com/redactrai/redactr-community/actions/workflows/ci.yml/badge.svg)](https://github.com/redactrai/redactr-community/actions/workflows/ci.yml)
+![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)
+![License](https://img.shields.io/badge/License-AGPL%20v3-A42E2B?logo=gnu&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-passing-brightgreen?logo=go&logoColor=white)
+![Telemetry](https://img.shields.io/badge/telemetry-opt--in%20%C2%B7%20anonymous-46E5A0?logoColor=white)
+![PRs welcome](https://img.shields.io/badge/PRs-welcome-ff69b4)
+
 Free, source-available (AGPL-3.0) **regex-only** redaction proxy. Runs locally and strips
 secrets/PII (API keys, emails, SSNs, connection strings, …) out of your AI tools' HTTPS
 requests before they leave your machine.
