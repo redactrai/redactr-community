@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -39,67 +40,56 @@ func newBodyHandler(redact func(string) (string, int, error)) *bodyHandler {
 	return &bodyHandler{redact: redact}
 }
 
-// handleBody extracts the last user message from a JSON request body, runs the
-// redact function, and — if the text changed — rewrites the body. It returns
-// the (possibly new) body bytes and the number of redactions applied.
-//
-// On any parse/rewrite error the original body is returned unchanged (fail-open).
+// handleBody redacts every string value in the JSON request body — across ALL
+// messages (the full conversation history and every role), the top-level system
+// field, tool results, and any other text — not just the last user message. This
+// is what stops secrets from leaking when a client re-sends the whole transcript
+// each turn. Non-JSON bodies pass through unchanged (fail-open).
 func (h *bodyHandler) handleBody(body []byte) ([]byte, int, error) {
-	msg, err := ExtractLastUserMessage(body)
-	if err != nil {
-		// Not a recognised JSON structure — pass through silently.
-		return body, 0, nil
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber() // keep numbers exact across the re-marshal
+	var v interface{}
+	if err := dec.Decode(&v); err != nil {
+		return body, 0, nil // not JSON — pass through
 	}
 
-	if msg.IsArray {
-		// Redact each text-bearing part independently to avoid any
-		// separator-split ambiguity when part text itself contains newlines.
-		total := 0
-		redactedParts := make([]string, len(msg.PartTexts))
-		for i, pt := range msg.PartTexts {
-			if pt == "" {
-				// Part carries no text (e.g. empty tool_result); preserve as-is.
-				redactedParts[i] = pt
-				continue
+	count := 0
+	var walk func(node interface{}) interface{}
+	walk = func(node interface{}) interface{} {
+		switch n := node.(type) {
+		case string:
+			red, c, err := h.redact(n)
+			if err != nil {
+				slog.Warn("redact error, forwarding string unredacted", "error", err)
+				return n
 			}
-			redacted, n, rerr := h.redact(pt)
-			if rerr != nil {
-				slog.Warn("redact error on part, forwarding unredacted", "part", i, "error", rerr)
-				redactedParts[i] = pt
-				continue
+			count += c
+			return red
+		case []interface{}:
+			for i, e := range n {
+				n[i] = walk(e)
 			}
-			redactedParts[i] = redacted
-			total += n
+			return n
+		case map[string]interface{}:
+			for k, e := range n {
+				n[k] = walk(e)
+			}
+			return n
+		default:
+			return n // json.Number, bool, nil — never redacted
 		}
-		if total == 0 {
-			return body, 0, nil
-		}
-		newBody, err := ReplaceLastUserMessage(body, msg, "", redactedParts)
-		if err != nil {
-			slog.Warn("body rewrite failed", "error", err)
-			return body, 0, nil
-		}
-		return newBody, total, nil
 	}
+	v = walk(v)
 
-	// String-content path: redact the whole string at once.
-	redactedText, n, err := h.redact(msg.Text)
+	if count == 0 {
+		return body, 0, nil // nothing matched — return the original bytes
+	}
+	out, err := json.Marshal(v)
 	if err != nil {
-		slog.Warn("redact error, forwarding unredacted", "error", err)
+		slog.Warn("body re-marshal failed, forwarding unredacted", "error", err)
 		return body, 0, nil
 	}
-
-	if n == 0 {
-		// Nothing to redact; return the original bytes unchanged.
-		return body, 0, nil
-	}
-
-	newBody, err := ReplaceLastUserMessage(body, msg, redactedText, nil)
-	if err != nil {
-		slog.Warn("body rewrite failed", "error", err)
-		return body, 0, nil
-	}
-	return newBody, n, nil
+	return out, count, nil
 }
 
 // New creates a Proxy that uses ca for MITM TLS and the supplied redact
