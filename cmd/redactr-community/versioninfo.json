@@ -1,0 +1,10 @@
+{
+  "FixedFileInfo": { "FileVersion": {"Major":0,"Minor":1,"Patch":0,"Build":0} },
+  "StringFileInfo": {
+    "ProductName": "redactr-community",
+    "FileDescription": "Redactr community edition - regex-only redaction proxy",
+    "CompanyName": "redactrai",
+    "LegalCopyright": "AGPL-3.0"
+  },
+  "IconPath": "assets/icon.ico"
+}
