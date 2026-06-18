@@ -21,3 +21,12 @@ redactr-community telemetry status
 Your code, traffic, and redacted values **never** leave your machine. The only thing that
 can leave is **opt-in, anonymous** telemetry (off by default): a random session id, app
 version, and OS — never content or your IP.
+
+## Telemetry (opt-in, anonymous)
+Off by default. Enable with `redactr-community telemetry on`. When on, it sends a heartbeat
+every ~10 min containing only: a random session id (rotated daily), the app version, and your
+OS. The collector derives country/city from Cloudflare's edge and **discards your IP**. It
+never sees your code, traffic, or redacted values. Source: `telemetry/worker/`.
+
+## Build
+    make build && make test

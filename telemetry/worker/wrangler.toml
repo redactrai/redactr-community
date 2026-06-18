@@ -1,0 +1,7 @@
+name = "redactr-telemetry"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+[[analytics_engine_datasets]]
+binding = "TELEMETRY"
+dataset = "redactr_community_heartbeats"
