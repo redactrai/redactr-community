@@ -18,27 +18,26 @@ product adds statistical + ML detection, agent sandboxing, and a team control pl
 
 ## Quick start
 
-1. **Get the binary** — download for your OS from the
-   **[latest release ⬇](https://github.com/redactrai/redactr-community/releases/latest)**, or build with Go:
-   ```
-   go install github.com/redactrai/redactr-community/cmd/redactr-community@latest
-   ```
-2. **Start it** (creates a local CA on first run):
-   ```
-   redactr-community
-   ```
-3. **Trust the CA** once — follow the per-OS instructions it prints.
-4. **Route your AI tools through it:**
-   ```
-   export HTTPS_PROXY=http://127.0.0.1:8080
-   # or:  redactr-community shell   # opens a subshell with the proxy preset
-   ```
-   Outbound secrets/PII are now redacted before they leave your machine.
+Install with Homebrew (macOS & Linux):
+```bash
+brew install redactrai/tap/redactr-community
+```
 
-Other commands: `redactr-community ca` (print CA trust steps) · `redactr-community telemetry on|off|status`.
+Run any AI tool through it. This **starts the proxy if it isn't already running**, then launches the
+tool in a shell that already has the redaction proxy attached:
+```bash
+redactr-community run claude        # also: codex, copilot, or any command
+```
+On first run it prints a one-time `sudo` line to trust the local CA. After that, secrets/PII in the
+tool's outbound HTTPS requests are redacted before they ever leave your machine.
 
-**Downloads:** every tagged release publishes macOS / Linux / Windows binaries on the
-**[Releases page](https://github.com/redactrai/redactr-community/releases)**.
+Other commands:
+- `redactr-community shell` — open an interactive shell with the proxy attached
+- `redactr-community start` — run the proxy in the foreground
+- `redactr-community ca` — print CA-trust instructions
+- `redactr-community telemetry on|off|status`
+
+Prefer a manual binary? Grab one from the **[Releases page](https://github.com/redactrai/redactr-community/releases)**.
 
 ## Privacy
 Your code, traffic, and redacted values **never** leave your machine. The only thing that

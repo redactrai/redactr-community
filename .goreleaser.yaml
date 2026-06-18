@@ -11,3 +11,20 @@ archives:
   - formats: [tar.gz]
     format_overrides:
       - { goos: windows, formats: [zip] }
+
+homebrew_casks:
+  - name: redactr-community
+    repository:
+      owner: redactrai
+      name: homebrew-tap
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    homepage: "https://redactrai.com"
+    description: "Regex-only redaction proxy — Redactr community edition"
+    # The binary is unsigned; strip the quarantine flag on install so it runs
+    # without a Gatekeeper prompt. (Replace with real signing/notarization later.)
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/redactr-community"]
+          end

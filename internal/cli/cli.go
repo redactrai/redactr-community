@@ -30,6 +30,16 @@ func TrustInstructions(caPath string) string {
 	}
 }
 
+// ProxyEnv returns the environment additions that route a child process's HTTPS
+// traffic through the local proxy and let common runtimes trust the local CA.
+func ProxyEnv(addr, caPath string) []string {
+	return []string{
+		"HTTPS_PROXY=" + addr,
+		"HTTP_PROXY=" + addr,
+		"NODE_EXTRA_CA_CERTS=" + caPath, // Node-based tools (e.g. Claude Code) trust the local CA
+	}
+}
+
 // SetTelemetry persists the consent flag.
 func SetTelemetry(on bool) error {
 	c := config.Load()

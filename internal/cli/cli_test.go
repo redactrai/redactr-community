@@ -12,3 +12,17 @@ func TestTelemetryBannerMentionsOptInAndAnonymous(t *testing.T) {
 		}
 	}
 }
+
+func TestProxyEnv(t *testing.T) {
+	env := ProxyEnv("http://127.0.0.1:8080", "/home/u/.redactr-community/ca.pem")
+	joined := strings.Join(env, "\n")
+	for _, want := range []string{
+		"HTTPS_PROXY=http://127.0.0.1:8080",
+		"HTTP_PROXY=http://127.0.0.1:8080",
+		"NODE_EXTRA_CA_CERTS=/home/u/.redactr-community/ca.pem",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("ProxyEnv missing %q; got %v", want, env)
+		}
+	}
+}

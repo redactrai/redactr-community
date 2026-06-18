@@ -2,10 +2,12 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -20,6 +22,7 @@ import (
 var version = "dev" // set via -ldflags at release
 
 const telemetryEndpoint = "https://t.redactrai.com/beat"
+const proxyHostPort = "127.0.0.1:8080"
 
 func caPaths() (string, string) {
 	d := config.Dir()
@@ -37,12 +40,14 @@ func main() {
 	case "ca":
 		cert, _ := caPaths()
 		fmt.Println(cli.TrustInstructions(cert))
+	case "run":
+		runRun(os.Args[2:])
 	case "shell":
 		runShell()
 	case "start":
 		runStart()
 	default:
-		fmt.Println("usage: redactr-community [start|shell|ca|telemetry on|off|status]")
+		fmt.Println("usage: redactr-community [start | run <command> | shell | ca | telemetry on|off|status]")
 	}
 }
 
@@ -79,6 +84,38 @@ func newProxy() (*proxy.Proxy, string, string) {
 	return p, cert, key
 }
 
+// proxyRunning reports whether something is already listening on the proxy port.
+func proxyRunning(hostport string) bool {
+	c, err := net.DialTimeout("tcp", hostport, 300*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = c.Close()
+	return true
+}
+
+// ensureProxy returns the proxy URL, starting an in-process proxy if one isn't
+// already running. The returned stop channel (nil when reusing an existing proxy)
+// must be closed by the caller when done.
+func ensureProxy() (addr string, stop chan struct{}) {
+	addr = "http://" + proxyHostPort
+	if proxyRunning(proxyHostPort) {
+		fmt.Fprintln(os.Stderr, "redactr-community: using the proxy already running on "+addr)
+		return addr, nil
+	}
+	p, _, _ := newProxy()
+	if _, err := p.Start(8080); err != nil {
+		fmt.Fprintln(os.Stderr, "proxy error:", err)
+		os.Exit(1)
+	}
+	fmt.Fprintln(os.Stderr, "redactr-community: started proxy on "+addr)
+	stop = make(chan struct{})
+	if config.Load().TelemetryEnabled {
+		go (&telemetry.Client{Enabled: true, Endpoint: telemetryEndpoint, Version: version, Interval: 10 * time.Minute}).Run(stop)
+	}
+	return addr, stop
+}
+
 func runStart() {
 	cli.MaybeShowFirstRun()
 	p, cert, _ := newProxy()
@@ -89,7 +126,7 @@ func runStart() {
 	}
 	fmt.Printf("redactr-community proxy listening on %s\n", addr)
 	fmt.Println(cli.TrustInstructions(cert))
-	fmt.Printf("Then: export HTTPS_PROXY=%s\n", addr)
+	fmt.Printf("Then: export HTTPS_PROXY=%s   (or use `redactr-community run <tool>`)\n", addr)
 
 	stop := make(chan struct{})
 	if config.Load().TelemetryEnabled {
@@ -102,19 +139,44 @@ func runStart() {
 	close(stop)
 }
 
-func runShell() {
-	p, _, _ := newProxy()
-	addr, err := p.Start(0)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+// runRun ensures the proxy is up, then launches the given command in a shell that
+// already carries the proxy environment (e.g. `redactr-community run claude`).
+func runRun(args []string) {
+	if len(args) == 0 {
+		fmt.Println("usage: redactr-community run <command> [args...]    e.g. redactr-community run claude")
+		return
 	}
+	cli.MaybeShowFirstRun()
+	cert, _ := caPaths()
+	addr, stop := ensureProxy()
+	sh := os.Getenv("SHELL")
+	if sh == "" {
+		sh = "/bin/sh"
+	}
+	c := exec.Command(sh, "-c", strings.Join(args, " "))
+	c.Env = append(os.Environ(), cli.ProxyEnv(addr, cert)...)
+	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
+	_ = c.Run()
+	if stop != nil {
+		close(stop)
+	}
+}
+
+// runShell ensures the proxy is up, then opens an interactive shell with the
+// proxy environment attached.
+func runShell() {
+	cli.MaybeShowFirstRun()
+	cert, _ := caPaths()
+	addr, stop := ensureProxy()
 	sh := os.Getenv("SHELL")
 	if sh == "" {
 		sh = "/bin/sh"
 	}
 	c := exec.Command(sh)
-	c.Env = append(os.Environ(), "HTTPS_PROXY="+addr, "HTTP_PROXY="+addr)
+	c.Env = append(os.Environ(), cli.ProxyEnv(addr, cert)...)
 	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 	_ = c.Run()
+	if stop != nil {
+		close(stop)
+	}
 }
