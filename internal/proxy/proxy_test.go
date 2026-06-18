@@ -217,3 +217,42 @@ func TestHandleBody_ArrayPartsWithNewlineAndEmptyToolResult(t *testing.T) {
 		t.Errorf("content truncated (newline bug): %s", s)
 	}
 }
+
+// TestHandleBody_RedactsHistoryAndSystem is the regression test for the leak
+// where only the LAST user message was redacted: conversation history, assistant
+// messages, and the top-level system field passed through unredacted, so a secret
+// typed in an earlier turn leaked once it became history.
+func TestHandleBody_RedactsHistoryAndSystem(t *testing.T) {
+	body := []byte(`{
+	  "model":"claude-3-5-sonnet",
+	  "max_tokens":1024,
+	  "system":"account context SECRET-sys",
+	  "messages":[
+	    {"role":"user","content":"turn1 SECRET-a"},
+	    {"role":"assistant","content":"sure, SECRET-b"},
+	    {"role":"user","content":[{"type":"text","text":"turn2 SECRET-c"}]}
+	  ]
+	}`)
+	h := newBodyHandler(fakeRedact)
+	out, n, err := h.handleBody(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n < 4 {
+		t.Fatalf("expected >=4 redactions (system + 3 messages), got %d", n)
+	}
+	s := string(out)
+	for _, leaked := range []string{"SECRET-sys", "SECRET-a", "SECRET-b", "SECRET-c"} {
+		if strings.Contains(s, leaked) {
+			t.Errorf("leaked %q in output: %s", leaked, s)
+		}
+	}
+	// numbers must survive the re-marshal intact
+	if !strings.Contains(s, "1024") {
+		t.Errorf("max_tokens corrupted in re-marshal: %s", s)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		t.Errorf("output not valid JSON: %v", err)
+	}
+}
