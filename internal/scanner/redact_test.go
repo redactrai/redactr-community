@@ -94,6 +94,26 @@ func TestRedact_Prose_NoRedactions(t *testing.T) {
 	}
 }
 
+func TestRedact_EnclosedMatchPrefersWidest(t *testing.T) {
+	s := scanner.New()
+	out, n, err := s.Redact("db postgres://user@example.com:5432/db done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "example.com") {
+		t.Errorf("secret leaked: %q", out)
+	}
+	if strings.Contains(out, "[REDACTED-EMAIL]") {
+		t.Errorf("inner email won over connection string: %q", out)
+	}
+	if !strings.Contains(out, "[REDACTED-CONNECTION-STRING]") {
+		t.Errorf("connection string not redacted: %q", out)
+	}
+	if n < 1 {
+		t.Errorf("expected >=1 redaction, got %d", n)
+	}
+}
+
 func TestRedact_MultipleFindings_RightToLeft(t *testing.T) {
 	s := scanner.New()
 	// Both an email and an AWS key in the same string — both should be redacted

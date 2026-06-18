@@ -5,40 +5,40 @@ import (
 	"sort"
 )
 
-// Redact replaces every detected finding with [REDACTED-<LABEL>].
-// Returns redacted text and the number of redactions. Applies right-to-left
-// so offsets stay valid; skips overlapping matches.
+// Redact replaces detected findings with [REDACTED-<LABEL>]. When matches overlap,
+// it prefers the widest enclosing match. Returns redacted text and the count applied.
 func (s *RegexScanner) Redact(text string) (string, int, error) {
-	result, err := s.Scan(text)
+	res, err := s.Scan(text)
 	if err != nil {
 		return text, 0, err
 	}
-
-	if len(result.Findings) == 0 {
+	f := res.Findings
+	if len(f) == 0 {
 		return text, 0, nil
 	}
-
-	// Sort findings by start position descending (right-to-left application).
-	findings := result.Findings
-	sort.Slice(findings, func(i, j int) bool {
-		return findings[i].Start > findings[j].Start
+	// Order left-to-right; on equal Start, the wider span (larger End) comes first.
+	sort.Slice(f, func(i, j int) bool {
+		if f[i].Start != f[j].Start {
+			return f[i].Start < f[j].Start
+		}
+		return f[i].End > f[j].End
 	})
-
-	// Apply replacements right-to-left, skipping overlaps.
-	out := []byte(text)
-	count := 0
-	lastStart := len(text) // tracks the leftmost boundary of previously replaced region
-
-	for _, f := range findings {
-		// Skip if this finding overlaps with an already-replaced region.
-		if f.End > lastStart {
+	// Greedily select non-overlapping spans; an inner/overlapping match is dropped
+	// in favor of the earlier, wider one.
+	selected := make([]Finding, 0, len(f))
+	lastEnd := -1
+	for _, fd := range f {
+		if fd.Start < lastEnd {
 			continue
 		}
-		replacement := fmt.Sprintf("[REDACTED-%s]", f.Label)
-		out = append(out[:f.Start], append([]byte(replacement), out[f.End:]...)...)
-		lastStart = f.Start
-		count++
+		selected = append(selected, fd)
+		lastEnd = fd.End
 	}
-
-	return string(out), count, nil
+	// Apply right-to-left so offsets stay valid.
+	out := text
+	for i := len(selected) - 1; i >= 0; i-- {
+		fd := selected[i]
+		out = out[:fd.Start] + fmt.Sprintf("[REDACTED-%s]", fd.Label) + out[fd.End:]
+	}
+	return out, len(selected), nil
 }
