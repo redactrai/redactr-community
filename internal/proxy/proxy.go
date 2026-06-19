@@ -17,6 +17,7 @@ import (
 
 	"github.com/elazarl/goproxy"
 	"github.com/redactrai/redactr-community/internal/certgen"
+	"github.com/redactrai/redactr-community/internal/config"
 )
 
 // Proxy is an HTTPS MITM proxy that intercepts requests, redacts the last user
@@ -119,9 +120,15 @@ func New(ca *certgen.CA, redact func(string) (string, int, error), onRedact func
 		handler: bh,
 	}
 
-	// Intercept ALL CONNECT tunnels with MITM.
+	// Load the allowlist of AI-provider hosts to MITM-decrypt; tunnel everything else.
+	allow := LoadAllowlist(config.AllowPath())
+
+	// Intercept CONNECT tunnels with MITM only for allow-listed hosts; plain-tunnel the rest.
 	gp.OnRequest().HandleConnectFunc(func(host string, ctx *goproxy.ProxyCtx) (*goproxy.ConnectAction, string) {
-		return goproxy.MitmConnect, host
+		if allow.Match(host) {
+			return goproxy.MitmConnect, host
+		}
+		return goproxy.OkConnect, host // plain tunnel — no decryption
 	})
 
 	// For every intercepted request: read body → redact → rewrite if needed.

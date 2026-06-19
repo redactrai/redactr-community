@@ -17,6 +17,9 @@ func Dir() string {
 }
 func path() string { return filepath.Join(Dir(), "config.json") }
 
+// AllowPath is the user allowlist file (extra MITM hosts).
+func AllowPath() string { return filepath.Join(Dir(), "allow.txt") }
+
 func Load() Config {
 	var c Config
 	b, err := os.ReadFile(path())
