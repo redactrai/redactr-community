@@ -14,7 +14,9 @@ type compiledPattern struct {
 	re   *regexp.Regexp
 }
 
-// RegexScanner detects sensitive data using regex patterns only (no ML, no entropy).
+// RegexScanner detects sensitive data using regex patterns and a heuristic Shannon-entropy
+// pass (still no ML). Entropy findings that overlap a regex finding are suppressed to
+// avoid double-reporting the same secret.
 type RegexScanner struct {
 	patterns []compiledPattern
 }
@@ -103,6 +105,8 @@ func DefaultPatterns() []PatternDef {
 }
 
 // Scan detects all sensitive findings in text and returns a ScanResult.
+// It runs all regex patterns first, then appends entropy findings that do not
+// overlap any regex finding (byte ranges [Start,End) intersect).
 func (s *RegexScanner) Scan(text string) (*ScanResult, error) {
 	var findings []Finding
 
@@ -116,6 +120,20 @@ func (s *RegexScanner) Scan(text string) (*ScanResult, error) {
 				End:        m[1],
 				Confidence: 1.0,
 			})
+		}
+	}
+
+	// Append entropy findings that do not overlap any regex finding.
+	for _, ef := range entropyFindings(text) {
+		overlaps := false
+		for _, rf := range findings {
+			if ef.Start < rf.End && rf.Start < ef.End {
+				overlaps = true
+				break
+			}
+		}
+		if !overlaps {
+			findings = append(findings, ef)
 		}
 	}
 
