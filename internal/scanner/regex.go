@@ -61,6 +61,11 @@ func DefaultPatterns() []PatternDef {
 		{Name: "CONNECTION-STRING", Pattern: `(?i)(mongodb|postgres|mysql|redis|amqp):\/\/[^\s]+`},
 		{Name: "GENERIC-SECRET", Pattern: `(?i)(password|secret|token|api_key|apikey)\s*[=:]\s*['"]?[A-Za-z0-9/+=\-_]{8,}['"]?`},
 		{Name: "GENERIC-SECRET", Pattern: `(?i)(password|passwd|pwd)\s*[=:]\s*['"]?[^\s'"]{4,}['"]?`},
+		// .env-style assignments where the KEY name signals a secret, including
+		// prefixes/suffixes (DATABASE_PASSWORD, STRIPE_API_KEY, *_ACCESS_KEY,
+		// CLIENT_SECRET, *_TOKEN). Redacts the whole KEY=value so the AI never
+		// sees the value when a tool reads your .env/credentials files.
+		{Name: "ENV-SECRET", Pattern: `(?i)\b\w*(?:secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|passphrase|password|passwd|credential)s?\w*\s*[=:]\s*['"]?[^\s'"]{6,}['"]?`},
 		{Name: "IP-ADDRESS", Pattern: `\b(?:\d{1,3}\.){3}\d{1,3}\b`},
 		// IPv6: full form only (8 groups) — shortened forms match random hex
 		{Name: "IPV6-ADDRESS", Pattern: `\b[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){7}\b`},
