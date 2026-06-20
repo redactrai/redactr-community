@@ -6,6 +6,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -24,6 +25,7 @@ import (
 	"github.com/redactrai/redactr-community/internal/cli"
 	"github.com/redactrai/redactr-community/internal/config"
 	"github.com/redactrai/redactr-community/internal/daemon"
+	"github.com/redactrai/redactr-community/internal/filescan"
 	"github.com/redactrai/redactr-community/internal/proxy"
 	"github.com/redactrai/redactr-community/internal/scanner"
 	"github.com/redactrai/redactr-community/internal/systemproxy"
@@ -70,8 +72,10 @@ func main() {
 		runDoctor()
 	case "allow":
 		runAllow(os.Args[2:])
+	case "scan":
+		runScan(os.Args[2:])
 	default:
-		fmt.Println("usage: redactr [start | run <command> | shell | ca | allow <host> | enable | disable | status | doctor | telemetry on|off|status]")
+		fmt.Println("usage: redactr [start | run <command> | shell | ca | allow <host> | enable | disable | status | doctor | telemetry on|off|status | scan [--redact --yes] <path>]")
 	}
 }
 
@@ -383,6 +387,68 @@ func runDoctor() {
 			fmt.Printf("  %-30s reached but header absent\n", host)
 		}
 	}
+}
+
+// runScan walks the given paths (default: ".") looking for secrets. With --redact
+// --yes it rewrites matching files in place. Without --redact it reports findings
+// and exits non-zero (CI/pre-commit friendly).
+func runScan(args []string) {
+	redactMode, yes := false, false
+	var paths []string
+	for _, a := range args {
+		switch a {
+		case "--redact":
+			redactMode = true
+		case "--yes", "-y":
+			yes = true
+		default:
+			paths = append(paths, a)
+		}
+	}
+	if len(paths) == 0 {
+		paths = []string{"."}
+	}
+	sc := scanner.New()
+	if redactMode {
+		if !yes {
+			fmt.Fprintln(os.Stderr, "refusing to modify files without --yes (this rewrites files in place). Re-run: redactr scan --redact --yes <path>")
+			os.Exit(2)
+		}
+		total := 0
+		for _, p := range paths {
+			_ = filepath.WalkDir(p, func(path string, d fs.DirEntry, err error) error {
+				if err != nil || d.IsDir() {
+					return nil
+				}
+				n, _ := filescan.RedactFile(path, sc)
+				if n > 0 {
+					total += n
+					fmt.Printf("redacted %d in %s\n", n, path)
+				}
+				return nil
+			})
+		}
+		fmt.Printf("done: %d redactions written\n", total)
+		return
+	}
+	// report-only (default)
+	var all []filescan.Finding
+	for _, p := range paths {
+		found, err := filescan.Scan(p, sc)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "scan error:", err)
+			os.Exit(1)
+		}
+		all = append(all, found...)
+	}
+	for _, f := range all {
+		fmt.Printf("%s:%d  %s\n", f.Path, f.Line, f.Label)
+	}
+	if len(all) > 0 {
+		fmt.Fprintf(os.Stderr, "\n%d secret(s) found.\n", len(all))
+		os.Exit(1)
+	}
+	fmt.Println("no secrets found.")
 }
 
 // runAllow appends each host argument to the user allowlist file so the daemon
