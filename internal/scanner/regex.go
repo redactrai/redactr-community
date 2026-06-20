@@ -142,5 +142,30 @@ func (s *RegexScanner) Scan(text string) (*ScanResult, error) {
 		}
 	}
 
-	return &ScanResult{Findings: findings}, nil
+	// Catch-all labels yield to a more specific finding when they overlap one,
+	// so e.g. AWS_ACCESS_KEY_ID=AKIA... keeps the precise AWS-ACCESS-KEY label
+	// instead of the generic wrapper. A catch-all is kept only where nothing more
+	// specific matched (e.g. DATABASE_PASSWORD=plainvalue).
+	generic := map[string]bool{"ENV-SECRET": true, "GENERIC-SECRET": true}
+	var kept []Finding
+	for _, fd := range findings {
+		if generic[fd.Label] {
+			swallowed := false
+			for _, other := range findings {
+				if generic[other.Label] {
+					continue
+				}
+				if fd.Start < other.End && other.Start < fd.End {
+					swallowed = true
+					break
+				}
+			}
+			if swallowed {
+				continue
+			}
+		}
+		kept = append(kept, fd)
+	}
+
+	return &ScanResult{Findings: kept}, nil
 }
