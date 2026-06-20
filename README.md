@@ -18,7 +18,7 @@ product adds statistical + ML detection, agent sandboxing, and a team control pl
 
 ## Quick start
 
-Install with Homebrew (macOS & Linux):
+Install with Homebrew (macOS):
 ```bash
 brew install redactrai/tap/redactr
 ```
@@ -42,7 +42,7 @@ Other commands:
 - `redactr allow <host>` — add a host to the MITM allowlist
 - `redactr telemetry on|off|status`
 
-Prefer a manual binary? Grab one from the **[Releases page](https://github.com/redactrai/redactr-community/releases)**.
+On **Windows or Linux** (or to install manually on macOS), grab a binary for your OS and chip from the **[Releases page](https://github.com/redactrai/redactr-community/releases)** — `.zip` for Windows (x64), `.tar.gz` for Linux (x64/arm64) and macOS. Each release ships SHA-256 checksums.
 
 ## Privacy
 Your code, traffic, and redacted values **never** leave your machine. The only thing that

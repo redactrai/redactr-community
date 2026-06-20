@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"net"
 	"net/http"
@@ -101,6 +102,10 @@ func (h *bodyHandler) handleBody(body []byte) ([]byte, int, error) {
 func New(ca *certgen.CA, redact func(string) (string, int, error), onRedact func(host string, n int)) (*Proxy, error) {
 	gp := goproxy.NewProxyHttpServer()
 	gp.Verbose = false
+	// Silence goproxy's own logger. Otherwise transport warnings (e.g. a client
+	// closing mid-response -> "broken pipe") print to stderr and corrupt the TUI
+	// of a tool launched via run/shell that shares this terminal.
+	gp.Logger = log.New(io.Discard, "", 0)
 
 	// Build a tls.Certificate from our CA so goproxy can sign leaf certs.
 	tlsCert, err := buildTLSCert(ca)
