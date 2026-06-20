@@ -42,26 +42,23 @@ func newBodyHandler(redact func(string) (string, int, error)) *bodyHandler {
 	return &bodyHandler{redact: redact}
 }
 
-// skipRedactKeys are request fields that carry app-defined JSON Schemas (tool
-// and function definitions, structured-output formats) — NOT user content.
-// Redacting strings inside them corrupts the schema and the provider rejects the
-// request (e.g. Anthropic 400: "tools.0.custom.input_schema: JSON schema is
-// invalid"). We leave these subtrees byte-for-byte intact.
-var skipRedactKeys = map[string]bool{
-	"tools":           true,
-	"tool_choice":     true,
-	"functions":       true, // OpenAI legacy function calling
-	"function_call":   true, // OpenAI legacy function calling
-	"response_format": true, // OpenAI structured outputs (json_schema)
-}
+// contentKeys are the top-level request fields that carry user/content text and
+// are therefore redacted. Everything else in the request — tools, tool_choice,
+// context_management, cache_control, model, metadata, ids, "type" discriminators,
+// and any other structural/control field — is left byte-for-byte untouched.
+//
+// This is an ALLOWLIST on purpose. We previously redacted every string in the
+// body, which corrupted app-defined structure (e.g. a tool's input_schema, or
+// context_management edit "type" values like "clear_thinking_20251015") and made
+// providers reject the request (HTTP 400). User secrets live in message content
+// and system prompts — exactly what we redact here — so scoping to content keeps
+// the protection while never breaking a request.
+var contentKeys = []string{"system", "instructions", "prompt", "input"}
 
-// handleBody redacts every string value in the JSON request body — across ALL
-// messages (the full conversation history and every role), the top-level system
-// field, tool results, and any other text — not just the last user message. This
-// is what stops secrets from leaking when a client re-sends the whole transcript
-// each turn. It deliberately skips app-defined schema fields (see skipRedactKeys)
-// so it never corrupts tool/function definitions. Non-JSON bodies pass through
-// unchanged (fail-open).
+// handleBody redacts user-facing content in the JSON request body — every
+// message's content (full history, all roles), the system/instructions prompt,
+// tool-result content, and legacy prompt/input fields — without touching any
+// structural field. Non-JSON / non-object bodies pass through unchanged.
 func (h *bodyHandler) handleBody(body []byte) ([]byte, int, error) {
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.UseNumber() // keep numbers exact across the re-marshal
@@ -69,42 +66,73 @@ func (h *bodyHandler) handleBody(body []byte) ([]byte, int, error) {
 	if err := dec.Decode(&v); err != nil {
 		return body, 0, nil // not JSON — pass through
 	}
+	root, ok := v.(map[string]interface{})
+	if !ok {
+		return body, 0, nil // not a JSON object request — pass through
+	}
 
 	count := 0
-	var walk func(node interface{}) interface{}
-	walk = func(node interface{}) interface{} {
-		switch n := node.(type) {
+	redactStr := func(s string) string {
+		red, c, err := h.redact(s)
+		if err != nil {
+			slog.Warn("redact error, forwarding string unredacted", "error", err)
+			return s
+		}
+		count += c
+		return red
+	}
+
+	// redactContent redacts a content value that may be a plain string or an
+	// array of typed parts (Anthropic/OpenAI message content). It only touches
+	// text — never structural part fields like "type"/"name"/"id" — and recurses
+	// into nested tool_result content.
+	var redactContent func(c interface{}) interface{}
+	redactContent = func(c interface{}) interface{} {
+		switch cv := c.(type) {
 		case string:
-			red, c, err := h.redact(n)
-			if err != nil {
-				slog.Warn("redact error, forwarding string unredacted", "error", err)
-				return n
-			}
-			count += c
-			return red
+			return redactStr(cv)
 		case []interface{}:
-			for i, e := range n {
-				n[i] = walk(e)
-			}
-			return n
-		case map[string]interface{}:
-			for k, e := range n {
-				if skipRedactKeys[k] {
-					continue // app-defined schema — never modify (would corrupt it)
+			for i, part := range cv {
+				switch pv := part.(type) {
+				case string:
+					cv[i] = redactStr(pv)
+				case map[string]interface{}:
+					if t, ok := pv["text"].(string); ok {
+						pv["text"] = redactStr(t)
+					}
+					if o, ok := pv["output"].(string); ok { // OpenAI responses tool output
+						pv["output"] = redactStr(o)
+					}
+					if inner, ok := pv["content"]; ok { // tool_result / nested content
+						pv["content"] = redactContent(inner)
+					}
+					cv[i] = pv
 				}
-				n[k] = walk(e)
 			}
-			return n
-		default:
-			return n // json.Number, bool, nil — never redacted
+			return cv
+		}
+		return c
+	}
+
+	for _, key := range contentKeys {
+		if val, ok := root[key]; ok {
+			root[key] = redactContent(val)
 		}
 	}
-	v = walk(v)
+	if msgs, ok := root["messages"].([]interface{}); ok {
+		for _, m := range msgs {
+			if mm, ok := m.(map[string]interface{}); ok {
+				if c, ok := mm["content"]; ok {
+					mm["content"] = redactContent(c)
+				}
+			}
+		}
+	}
 
 	if count == 0 {
 		return body, 0, nil // nothing matched — return the original bytes
 	}
-	out, err := json.Marshal(v)
+	out, err := json.Marshal(root)
 	if err != nil {
 		slog.Warn("body re-marshal failed, forwarding unredacted", "error", err)
 		return body, 0, nil
