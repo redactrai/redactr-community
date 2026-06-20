@@ -20,22 +20,27 @@ product adds statistical + ML detection, agent sandboxing, and a team control pl
 
 Install with Homebrew (macOS & Linux):
 ```bash
-brew install redactrai/tap/redactr-community
+brew install redactrai/tap/redactr
 ```
 
 Run any AI tool through it. This **starts the proxy if it isn't already running**, then launches the
 tool in a shell that already has the redaction proxy attached:
 ```bash
-redactr-community run claude        # also: codex, copilot, or any command
+redactr run claude        # also: codex, copilot, or any command
 ```
 On first run it prints a one-time `sudo` line to trust the local CA. After that, secrets/PII in the
 tool's outbound HTTPS requests are redacted before they ever leave your machine.
 
 Other commands:
-- `redactr-community shell` — open an interactive shell with the proxy attached
-- `redactr-community start` — run the proxy in the foreground
-- `redactr-community ca` — print CA-trust instructions
-- `redactr-community telemetry on|off|status`
+- `redactr shell` — open an interactive shell with the proxy attached
+- `redactr start` — run the proxy in the foreground
+- `redactr ca` — print CA-trust instructions
+- `redactr enable` — trust the CA, start the daemon, and set the system proxy
+- `redactr disable` — revert the system proxy and stop the daemon
+- `redactr status` — show daemon, CA trust, and system proxy state
+- `redactr doctor` — run status checks plus a live interception probe
+- `redactr allow <host>` — add a host to the MITM allowlist
+- `redactr telemetry on|off|status`
 
 Prefer a manual binary? Grab one from the **[Releases page](https://github.com/redactrai/redactr-community/releases)**.
 
@@ -45,7 +50,7 @@ can leave is **opt-in, anonymous** telemetry (off by default): a random session 
 version, and OS — never content or your IP.
 
 ## Telemetry (opt-in, anonymous)
-Off by default. Enable with `redactr-community telemetry on`. When on, it sends a heartbeat
+Off by default. Enable with `redactr telemetry on`. When on, it sends a heartbeat
 every ~10 min containing only: a random session id (rotated daily), the app version, and your
 OS. The collector derives country/city from Cloudflare's edge and **discards your IP**. It
 never sees your code, traffic, or redacted values. Source: `telemetry/worker/`.

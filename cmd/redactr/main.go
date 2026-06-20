@@ -41,6 +41,7 @@ func caPaths() (string, string) {
 }
 
 func main() {
+	config.Migrate()
 	cmd := "start"
 	if len(os.Args) > 1 {
 		cmd = os.Args[1]
@@ -70,7 +71,7 @@ func main() {
 	case "allow":
 		runAllow(os.Args[2:])
 	default:
-		fmt.Println("usage: redactr-community [start | run <command> | shell | ca | allow <host> | enable | disable | status | doctor | telemetry on|off|status]")
+		fmt.Println("usage: redactr [start | run <command> | shell | ca | allow <host> | enable | disable | status | doctor | telemetry on|off|status]")
 	}
 }
 
@@ -128,7 +129,7 @@ func proxyRunning(hostport string) bool {
 func ensureProxy() (addr string, stop chan struct{}) {
 	addr = "http://" + proxyHostPort
 	if proxyRunning(proxyHostPort) {
-		fmt.Fprintln(os.Stderr, "redactr-community: using the proxy already running on "+addr)
+		fmt.Fprintln(os.Stderr, "redactr: using the proxy already running on "+addr)
 		return addr, nil
 	}
 	p, _, _ := newProxy()
@@ -136,7 +137,7 @@ func ensureProxy() (addr string, stop chan struct{}) {
 		fmt.Fprintln(os.Stderr, "proxy error:", err)
 		os.Exit(1)
 	}
-	fmt.Fprintln(os.Stderr, "redactr-community: started proxy on "+addr)
+	fmt.Fprintln(os.Stderr, "redactr: started proxy on "+addr)
 	stop = make(chan struct{})
 	if config.Load().TelemetryEnabled {
 		go (&telemetry.Client{Enabled: true, Endpoint: telemetryEndpoint, Version: version, Interval: 10 * time.Minute}).Run(stop)
@@ -152,9 +153,9 @@ func runStart() {
 		fmt.Fprintln(os.Stderr, "proxy error:", err)
 		os.Exit(1)
 	}
-	fmt.Printf("redactr-community proxy listening on %s\n", addr)
+	fmt.Printf("redactr proxy listening on %s\n", addr)
 	fmt.Println(cli.TrustInstructions(cert))
-	fmt.Printf("Then: export HTTPS_PROXY=%s   (or use `redactr-community run <tool>`)\n", addr)
+	fmt.Printf("Then: export HTTPS_PROXY=%s   (or use `redactr run <tool>`)\n", addr)
 
 	stop := make(chan struct{})
 	if config.Load().TelemetryEnabled {
@@ -168,19 +169,19 @@ func runStart() {
 }
 
 // runRun ensures the proxy is up, then launches the given command in a shell that
-// already carries the proxy environment (e.g. `redactr-community run claude`).
+// already carries the proxy environment (e.g. `redactr run claude`).
 // For GUI tools, it prints an informational note instead of injecting proxy env
 // (GUI apps cannot inherit terminal env vars; the system proxy daemon protects them).
 func runRun(args []string) {
 	if len(args) == 0 {
-		fmt.Println("usage: redactr-community run <command> [args...]    e.g. redactr-community run claude")
+		fmt.Println("usage: redactr run <command> [args...]    e.g. redactr run claude")
 		return
 	}
 	cli.MaybeShowFirstRun()
 	if cli.IsGUI(args[0]) {
 		fmt.Fprintf(os.Stderr, "note: %s is a GUI tool — env vars don't reach GUI apps.\n", args[0])
 		fmt.Fprintln(os.Stderr, "      GUI tools are protected by the system proxy when the daemon is enabled.")
-		fmt.Fprintln(os.Stderr, "      Ensure it's on with: redactr-community enable")
+		fmt.Fprintln(os.Stderr, "      Ensure it's on with: redactr enable")
 		sh := os.Getenv("SHELL")
 		if sh == "" {
 			sh = "/bin/sh"
@@ -273,7 +274,7 @@ func runEnable() {
 		os.Exit(1)
 	}
 	fmt.Println("✓ Redactr is on. Every AI tool (terminal and GUI) is now protected.")
-	fmt.Println("  Turn it off any time with: redactr-community disable")
+	fmt.Println("  Turn it off any time with: redactr disable")
 }
 
 // runDisable reverts the system proxy, stops the daemon, and optionally untrusts the CA.
@@ -327,7 +328,7 @@ func runStatus() {
 		fmt.Println()
 		fmt.Println("WARNING: The system proxy is set but the Redactr daemon is NOT running.")
 		fmt.Println("         All proxied traffic will fail until you restore internet access.")
-		fmt.Println("         Run:  redactr-community disable")
+		fmt.Println("         Run:  redactr disable")
 	}
 }
 
@@ -388,8 +389,8 @@ func runDoctor() {
 // MITM-decrypts those hosts on next restart.
 func runAllow(hosts []string) {
 	if len(hosts) == 0 {
-		fmt.Println("usage: redactr-community allow <host> [host ...]")
-		fmt.Println("       e.g. redactr-community allow api.example.com")
+		fmt.Println("usage: redactr allow <host> [host ...]")
+		fmt.Println("       e.g. redactr allow api.example.com")
 		return
 	}
 	path := config.AllowPath()
@@ -408,6 +409,6 @@ func runAllow(hosts []string) {
 			fmt.Fprintln(os.Stderr, "allow: write error:", err)
 			os.Exit(1)
 		}
-		fmt.Printf("added %s to the allowlist — restart the daemon (redactr-community disable && enable) to apply.\n", h)
+		fmt.Printf("added %s to the allowlist — restart the daemon (redactr disable && enable) to apply.\n", h)
 	}
 }

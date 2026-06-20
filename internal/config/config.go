@@ -13,7 +13,23 @@ type Config struct {
 
 func Dir() string {
 	h, _ := os.UserHomeDir()
-	return filepath.Join(h, ".redactr-community")
+	return filepath.Join(h, ".redactr")
+}
+
+// Migrate moves the legacy ~/.redactr-community dir to ~/.redactr once. Idempotent.
+func Migrate() {
+	h, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	old := filepath.Join(h, ".redactr-community")
+	new := filepath.Join(h, ".redactr")
+	if _, err := os.Stat(new); err == nil {
+		return
+	} // new exists, nothing to do
+	if _, err := os.Stat(old); err == nil {
+		_ = os.Rename(old, new)
+	}
 }
 func path() string { return filepath.Join(Dir(), "config.json") }
 

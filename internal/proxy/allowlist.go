@@ -7,8 +7,8 @@ import (
 )
 
 // DefaultAllowHosts are the AI-provider hosts MITM-decrypted by default.
-// Everything else is tunnelled untouched. Extend via ~/.redactr-community/allow.txt
-// or with: redactr-community allow <host>
+// Everything else is tunnelled untouched. Extend via ~/.redactr/allow.txt
+// or with: redactr allow <host>
 // NOTE: antigravity's exact endpoints are unconfirmed (see plan Task 7).
 var DefaultAllowHosts = []string{
 	"api.anthropic.com",

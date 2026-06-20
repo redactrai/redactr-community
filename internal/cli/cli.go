@@ -9,13 +9,13 @@ import (
 )
 
 func TelemetryBanner() string {
-	return `── redactr-community ───────────────────────────────────────
+	return `── redactr ───────────────────────────────────────────────────
  Anonymous, opt-in telemetry is OFF by default.
  If you enable it, we send only a random session id, the app
  version, and your OS — never your code, traffic, redacted
  values, or IP. It helps us see how many people use the tool.
- Enable:  redactr-community telemetry on
- Status:  redactr-community telemetry status
+ Enable:  redactr telemetry on
+ Status:  redactr telemetry status
 ────────────────────────────────────────────────────────────`
 }
 
