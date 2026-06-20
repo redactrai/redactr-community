@@ -1,7 +1,8 @@
 version: 2
+project_name: redactr
 builds:
-  - main: ./cmd/redactr-community
-    binary: redactr-community
+  - main: ./cmd/redactr
+    binary: redactr
     ldflags: ["-s -w -X main.version={{.Version}}"]
     goos: [darwin, linux, windows]
     goarch: [amd64, arm64]
@@ -13,7 +14,7 @@ archives:
       - { goos: windows, formats: [zip] }
 
 homebrew_casks:
-  - name: redactr-community
+  - name: redactr
     repository:
       owner: redactrai
       name: homebrew-tap
@@ -26,5 +27,5 @@ homebrew_casks:
       post:
         install: |
           if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/redactr-community"]
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/redactr"]
           end

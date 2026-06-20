@@ -9,13 +9,13 @@ import (
 )
 
 func TelemetryBanner() string {
-	return `── redactr-community ───────────────────────────────────────
+	return `── redactr ───────────────────────────────────────────────────
  Anonymous, opt-in telemetry is OFF by default.
  If you enable it, we send only a random session id, the app
  version, and your OS — never your code, traffic, redacted
  values, or IP. It helps us see how many people use the tool.
- Enable:  redactr-community telemetry on
- Status:  redactr-community telemetry status
+ Enable:  redactr telemetry on
+ Status:  redactr telemetry status
 ────────────────────────────────────────────────────────────`
 }
 
@@ -37,6 +37,8 @@ func ProxyEnv(addr, caPath string) []string {
 		"HTTPS_PROXY=" + addr,
 		"HTTP_PROXY=" + addr,
 		"NODE_EXTRA_CA_CERTS=" + caPath, // Node-based tools (e.g. Claude Code) trust the local CA
+		"SSL_CERT_FILE=" + caPath,       // Rust/reqwest (e.g. codex) and others read this
+		"SSL_CERT_DIR=",                 // empty -> force use of SSL_CERT_FILE only
 	}
 }
 
