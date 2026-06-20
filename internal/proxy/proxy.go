@@ -11,9 +11,9 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/elazarl/goproxy"
@@ -32,14 +32,17 @@ type Proxy struct {
 	handler  *bodyHandler
 }
 
-// bodyHandler wraps the redact function and exposes a pure handleBody method
-// that can be tested independently of the HTTP/TLS stack.
+// Replacement is a literal secret substring and the text to redact it to.
+type Replacement struct{ Old, New string }
+
+// bodyHandler finds secrets in request content and exposes a pure handleBody
+// method that can be tested independently of the HTTP/TLS stack.
 type bodyHandler struct {
-	redact func(string) (string, int, error)
+	find func(string) []Replacement
 }
 
-func newBodyHandler(redact func(string) (string, int, error)) *bodyHandler {
-	return &bodyHandler{redact: redact}
+func newBodyHandler(find func(string) []Replacement) *bodyHandler {
+	return &bodyHandler{find: find}
 }
 
 // contentKeys are the top-level request fields that carry user/content text and
@@ -55,87 +58,93 @@ func newBodyHandler(redact func(string) (string, int, error)) *bodyHandler {
 // the protection while never breaking a request.
 var contentKeys = []string{"system", "instructions", "prompt", "input"}
 
-// handleBody redacts user-facing content in the JSON request body — every
-// message's content (full history, all roles), the system/instructions prompt,
-// tool-result content, and legacy prompt/input fields — without touching any
-// structural field. Non-JSON / non-object bodies pass through unchanged.
+// handleBody redacts secrets in the request's user-content fields (every
+// message's content across all roles, the system/instructions prompt, legacy
+// prompt/input, and nested tool-result / tool output) using SURGICAL byte-level
+// replacement on the original body. Everything else stays byte-for-byte
+// identical — JSON key order, structural/control fields (tools,
+// context_management, cache_control, model, metadata), and Claude Code's
+// x-anthropic-billing-header system block. Re-serializing the whole body
+// reorders keys and broke those, causing provider 400s. Non-JSON / non-object
+// bodies pass through unchanged.
 func (h *bodyHandler) handleBody(body []byte) ([]byte, int, error) {
 	dec := json.NewDecoder(bytes.NewReader(body))
-	dec.UseNumber() // keep numbers exact across the re-marshal
+	dec.UseNumber()
 	var v interface{}
 	if err := dec.Decode(&v); err != nil {
 		return body, 0, nil // not JSON — pass through
 	}
 	root, ok := v.(map[string]interface{})
 	if !ok {
-		return body, 0, nil // not a JSON object request — pass through
+		return body, 0, nil
 	}
 
-	count := 0
-	redactStr := func(s string) string {
-		red, c, err := h.redact(s)
-		if err != nil {
-			slog.Warn("redact error, forwarding string unredacted", "error", err)
-			return s
+	// Collect secrets from content fields ONLY, so we never touch structural
+	// fields (billing block, tool schemas, …).
+	repl := map[string]string{}
+	add := func(s string) {
+		// Claude Code places an Anthropic-reserved control marker as a system
+		// text block (x-anthropic-billing-header: ...). It is not user content;
+		// redacting anything inside it makes Anthropic reject the request.
+		if strings.HasPrefix(s, "x-anthropic-billing-header:") {
+			return
 		}
-		count += c
-		return red
+		for _, r := range h.find(s) {
+			if r.Old != "" {
+				repl[r.Old] = r.New
+			}
+		}
 	}
-
-	// redactContent redacts a content value that may be a plain string or an
-	// array of typed parts (Anthropic/OpenAI message content). It only touches
-	// text — never structural part fields like "type"/"name"/"id" — and recurses
-	// into nested tool_result content.
-	var redactContent func(c interface{}) interface{}
-	redactContent = func(c interface{}) interface{} {
+	var collect func(c interface{})
+	collect = func(c interface{}) {
 		switch cv := c.(type) {
 		case string:
-			return redactStr(cv)
+			add(cv)
 		case []interface{}:
-			for i, part := range cv {
+			for _, part := range cv {
 				switch pv := part.(type) {
 				case string:
-					cv[i] = redactStr(pv)
+					add(pv)
 				case map[string]interface{}:
 					if t, ok := pv["text"].(string); ok {
-						pv["text"] = redactStr(t)
+						add(t)
 					}
 					if o, ok := pv["output"].(string); ok { // OpenAI responses tool output
-						pv["output"] = redactStr(o)
+						add(o)
 					}
 					if inner, ok := pv["content"]; ok { // tool_result / nested content
-						pv["content"] = redactContent(inner)
+						collect(inner)
 					}
-					cv[i] = pv
 				}
 			}
-			return cv
 		}
-		return c
 	}
-
 	for _, key := range contentKeys {
 		if val, ok := root[key]; ok {
-			root[key] = redactContent(val)
+			collect(val)
 		}
 	}
 	if msgs, ok := root["messages"].([]interface{}); ok {
 		for _, m := range msgs {
 			if mm, ok := m.(map[string]interface{}); ok {
 				if c, ok := mm["content"]; ok {
-					mm["content"] = redactContent(c)
+					collect(c)
 				}
 			}
 		}
 	}
 
-	if count == 0 {
-		return body, 0, nil // nothing matched — return the original bytes
-	}
-	out, err := json.Marshal(root)
-	if err != nil {
-		slog.Warn("body re-marshal failed, forwarding unredacted", "error", err)
+	if len(repl) == 0 {
 		return body, 0, nil
+	}
+	// Surgical replacement on the ORIGINAL bytes — nothing else changes.
+	out := body
+	count := 0
+	for old, nw := range repl {
+		if n := bytes.Count(out, []byte(old)); n > 0 {
+			out = bytes.ReplaceAll(out, []byte(old), []byte(nw))
+			count += n
+		}
 	}
 	return out, count, nil
 }
@@ -145,7 +154,7 @@ func (h *bodyHandler) handleBody(body []byte) ([]byte, int, error) {
 //
 // onRedact, if non-nil, is called after each request with the upstream host and
 // the number of redactions applied (may be 0 for clean requests).
-func New(ca *certgen.CA, redact func(string) (string, int, error), onRedact func(host string, n int)) (*Proxy, error) {
+func New(ca *certgen.CA, find func(string) []Replacement, onRedact func(host string, n int)) (*Proxy, error) {
 	gp := goproxy.NewProxyHttpServer()
 	gp.Verbose = false
 	// Silence goproxy's own logger. Otherwise transport warnings (e.g. a client
@@ -164,7 +173,7 @@ func New(ca *certgen.CA, redact func(string) (string, int, error), onRedact func
 	// per-instance CA. This is a known limitation of the library.
 	goproxy.GoproxyCa = tlsCert
 
-	bh := newBodyHandler(redact)
+	bh := newBodyHandler(find)
 
 	p := &Proxy{
 		goproxy: gp,
