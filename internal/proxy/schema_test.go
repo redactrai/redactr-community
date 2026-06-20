@@ -30,7 +30,7 @@ func TestHandleBody_PreservesToolSchemas(t *testing.T) {
 	  "messages":[{"role":"user","content":"my key is AKIAIOSFODNN7EXAMPLE"}]
 	}`)
 
-	h := newBodyHandler(scanner.New().Redact)
+	h := newBodyHandler(scannerFind(scanner.New()))
 	out, n, err := h.handleBody(body)
 	if err != nil {
 		t.Fatal(err)
@@ -78,7 +78,7 @@ func TestHandleBody_PreservesControlFields(t *testing.T) {
 	  "system":[{"type":"text","text":"be helpful","cache_control":{"type":"ephemeral"}}],
 	  "messages":[{"role":"user","content":"email me at rguha@something.com"}]
 	}`)
-	h := newBodyHandler(scanner.New().Redact)
+	h := newBodyHandler(scannerFind(scanner.New()))
 	out, n, err := h.handleBody(body)
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +114,7 @@ func TestHandleBody_RedactsToolResultContent(t *testing.T) {
 	    {"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_1","content":"match: AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIabcdefK7MDENGbPxRfiCYEXAMPLE"}]}
 	  ]
 	}`)
-	h := newBodyHandler(scanner.New().Redact)
+	h := newBodyHandler(scannerFind(scanner.New()))
 	out, n, err := h.handleBody(body)
 	if err != nil {
 		t.Fatal(err)

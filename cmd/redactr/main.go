@@ -104,7 +104,22 @@ func newProxy() (*proxy.Proxy, string, string) {
 		os.Exit(1)
 	}
 	s := scanner.New()
-	p, err := proxy.New(ca, s.Redact, nil)
+	// find returns the secrets in a content string so the proxy can redact them
+	// with surgical byte-level replacement (never re-serializing the body).
+	find := func(text string) []proxy.Replacement {
+		res, err := s.Scan(text)
+		if err != nil {
+			return nil
+		}
+		out := make([]proxy.Replacement, 0, len(res.Findings))
+		for _, f := range res.Findings {
+			if f.Value != "" {
+				out = append(out, proxy.Replacement{Old: f.Value, New: "[REDACTED-" + f.Label + "]"})
+			}
+		}
+		return out
+	}
+	p, err := proxy.New(ca, find, nil)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "proxy error:", err)
 		os.Exit(1)

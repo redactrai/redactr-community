@@ -34,7 +34,17 @@ func startProxy(t *testing.T) *url.URL {
 	}
 
 	sc := scanner.New()
-	p, err := proxy.New(ca, sc.Redact, nil)
+	find := func(text string) []proxy.Replacement {
+		res, _ := sc.Scan(text)
+		var out []proxy.Replacement
+		for _, f := range res.Findings {
+			if f.Value != "" {
+				out = append(out, proxy.Replacement{Old: f.Value, New: "[REDACTED-" + f.Label + "]"})
+			}
+		}
+		return out
+	}
+	p, err := proxy.New(ca, find, nil)
 	if err != nil {
 		t.Fatalf("proxy.New: %v", err)
 	}

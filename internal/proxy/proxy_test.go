@@ -8,14 +8,29 @@ import (
 	"github.com/redactrai/redactr-community/internal/scanner"
 )
 
-// fakeRedact is a simple redact func for testing: replaces "SECRET" with "[REDACTED-SECRET]".
-func fakeRedact(text string) (string, int, error) {
-	const needle = "SECRET"
-	count := strings.Count(text, needle)
-	if count == 0 {
-		return text, 0, nil
+// fakeFind is a simple find func for testing: flags the literal "SECRET".
+func fakeFind(text string) []Replacement {
+	if strings.Contains(text, "SECRET") {
+		return []Replacement{{Old: "SECRET", New: "[REDACTED-SECRET]"}}
 	}
-	return strings.ReplaceAll(text, needle, "[REDACTED-SECRET]"), count, nil
+	return nil
+}
+
+// scannerFind adapts a real scanner into the proxy's find func.
+func scannerFind(sc *scanner.RegexScanner) func(string) []Replacement {
+	return func(text string) []Replacement {
+		res, err := sc.Scan(text)
+		if err != nil {
+			return nil
+		}
+		var out []Replacement
+		for _, f := range res.Findings {
+			if f.Value != "" {
+				out = append(out, Replacement{Old: f.Value, New: "[REDACTED-" + f.Label + "]"})
+			}
+		}
+		return out
+	}
 }
 
 // buildBody constructs a minimal OpenAI-style JSON request body with a single
@@ -59,7 +74,7 @@ func buildBodyArray(t *testing.T, textPart string) []byte {
 
 // TestHandleBody_CleanMessage verifies that a body with no secrets passes through unchanged.
 func TestHandleBody_CleanMessage(t *testing.T) {
-	h := newBodyHandler(fakeRedact)
+	h := newBodyHandler(fakeFind)
 	input := buildBody(t, "Hello, what is the weather?")
 
 	out, n, err := h.handleBody(input)
@@ -78,7 +93,7 @@ func TestHandleBody_CleanMessage(t *testing.T) {
 // TestHandleBody_SecretIsRedacted verifies that a body containing "SECRET" is
 // rewritten with [REDACTED-SECRET] in the user message content.
 func TestHandleBody_SecretIsRedacted(t *testing.T) {
-	h := newBodyHandler(fakeRedact)
+	h := newBodyHandler(fakeFind)
 	// Use a longer phrase so we can check the original phrase is gone even
 	// though [REDACTED-SECRET] itself contains the substring "SECRET".
 	input := buildBody(t, "My password is SECRET and I need help.")
@@ -111,7 +126,7 @@ func TestHandleBody_SecretIsRedacted(t *testing.T) {
 // TestHandleBody_SecretInArrayContent verifies redaction works when the user
 // message content is a JSON array of typed parts (multi-part / Claude format).
 func TestHandleBody_SecretInArrayContent(t *testing.T) {
-	h := newBodyHandler(fakeRedact)
+	h := newBodyHandler(fakeFind)
 	input := buildBodyArray(t, "Here is my token: SECRET")
 
 	out, n, err := h.handleBody(input)
@@ -137,7 +152,7 @@ func TestHandleBody_SecretInArrayContent(t *testing.T) {
 // TestHandleBody_NonJSONPassthrough verifies that a non-JSON body is returned
 // unchanged and no error is reported (fail-open).
 func TestHandleBody_NonJSONPassthrough(t *testing.T) {
-	h := newBodyHandler(fakeRedact)
+	h := newBodyHandler(fakeFind)
 	input := []byte("this is not JSON")
 
 	out, n, err := h.handleBody(input)
@@ -155,7 +170,7 @@ func TestHandleBody_NonJSONPassthrough(t *testing.T) {
 // TestHandleBody_ContentLengthSemantics verifies that the rewritten body's
 // length matches what Content-Length should be set to.
 func TestHandleBody_ContentLengthSemantics(t *testing.T) {
-	h := newBodyHandler(fakeRedact)
+	h := newBodyHandler(fakeFind)
 	input := buildBody(t, "Password: SECRET")
 
 	out, _, err := h.handleBody(input)
@@ -172,7 +187,7 @@ func TestHandleBody_ContentLengthSemantics(t *testing.T) {
 
 // TestHandleBody_MultipleSecretsRedacted verifies all occurrences in a message are redacted.
 func TestHandleBody_MultipleSecretsRedacted(t *testing.T) {
-	h := newBodyHandler(fakeRedact)
+	h := newBodyHandler(fakeFind)
 	input := buildBody(t, "First SECRET and second SECRET here.")
 
 	out, n, err := h.handleBody(input)
@@ -201,7 +216,7 @@ func TestHandleBody_MultipleSecretsRedacted(t *testing.T) {
 //     rewrite index and left the secret in the wrong (or dropped) part.
 func TestHandleBody_ArrayPartsWithNewlineAndEmptyToolResult(t *testing.T) {
 	body := []byte(`{"messages":[{"role":"user","content":[{"type":"tool_result","content":""},{"type":"text","text":"line1\nkey AKIA1234567890ABCD12 line2"}]}]}`)
-	h := newBodyHandler(scanner.New().Redact)
+	h := newBodyHandler(scannerFind(scanner.New()))
 	out, n, err := h.handleBody(body)
 	if err != nil {
 		t.Fatal(err)
@@ -233,7 +248,7 @@ func TestHandleBody_RedactsHistoryAndSystem(t *testing.T) {
 	    {"role":"user","content":[{"type":"text","text":"turn2 SECRET-c"}]}
 	  ]
 	}`)
-	h := newBodyHandler(fakeRedact)
+	h := newBodyHandler(fakeFind)
 	out, n, err := h.handleBody(body)
 	if err != nil {
 		t.Fatal(err)
