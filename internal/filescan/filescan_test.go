@@ -43,6 +43,34 @@ func TestScan_findsSecretsInDotEnv(t *testing.T) {
 	}
 }
 
+// TestScan_FindsEnvSecrets proves that Scan detects secrets in a real .env file
+// containing AWS and password secrets — directly exercising the claim that
+// "redactr scan" surfaces credentials from env files.
+func TestScan_FindsEnvSecrets(t *testing.T) {
+	tmp := t.TempDir()
+
+	envContent := "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\nDB_PASSWORD=hunter2longvalueXYZ\n"
+	envPath := filepath.Join(tmp, ".env")
+	if err := os.WriteFile(envPath, []byte(envContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sc := scanner.New()
+	findings, err := filescan.Scan(tmp, sc)
+	if err != nil {
+		t.Fatalf("Scan returned error: %v", err)
+	}
+	if len(findings) < 1 {
+		t.Fatalf("expected >=1 finding for .env with AWS key + DB password, got 0")
+	}
+	// All findings must point at the .env file.
+	for _, f := range findings {
+		if !strings.HasSuffix(f.Path, ".env") {
+			t.Errorf("unexpected finding outside .env: %s (label=%s)", f.Path, f.Label)
+		}
+	}
+}
+
 func TestRedactFile_removesSecretsAndPreservesStructure(t *testing.T) {
 	tmp := t.TempDir()
 
