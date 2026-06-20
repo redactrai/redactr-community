@@ -42,11 +42,26 @@ func newBodyHandler(redact func(string) (string, int, error)) *bodyHandler {
 	return &bodyHandler{redact: redact}
 }
 
+// skipRedactKeys are request fields that carry app-defined JSON Schemas (tool
+// and function definitions, structured-output formats) — NOT user content.
+// Redacting strings inside them corrupts the schema and the provider rejects the
+// request (e.g. Anthropic 400: "tools.0.custom.input_schema: JSON schema is
+// invalid"). We leave these subtrees byte-for-byte intact.
+var skipRedactKeys = map[string]bool{
+	"tools":           true,
+	"tool_choice":     true,
+	"functions":       true, // OpenAI legacy function calling
+	"function_call":   true, // OpenAI legacy function calling
+	"response_format": true, // OpenAI structured outputs (json_schema)
+}
+
 // handleBody redacts every string value in the JSON request body — across ALL
 // messages (the full conversation history and every role), the top-level system
 // field, tool results, and any other text — not just the last user message. This
 // is what stops secrets from leaking when a client re-sends the whole transcript
-// each turn. Non-JSON bodies pass through unchanged (fail-open).
+// each turn. It deliberately skips app-defined schema fields (see skipRedactKeys)
+// so it never corrupts tool/function definitions. Non-JSON bodies pass through
+// unchanged (fail-open).
 func (h *bodyHandler) handleBody(body []byte) ([]byte, int, error) {
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.UseNumber() // keep numbers exact across the re-marshal
@@ -74,6 +89,9 @@ func (h *bodyHandler) handleBody(body []byte) ([]byte, int, error) {
 			return n
 		case map[string]interface{}:
 			for k, e := range n {
+				if skipRedactKeys[k] {
+					continue // app-defined schema — never modify (would corrupt it)
+				}
 				n[k] = walk(e)
 			}
 			return n
