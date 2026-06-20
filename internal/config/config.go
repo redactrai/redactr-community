@@ -20,6 +20,12 @@ func path() string { return filepath.Join(Dir(), "config.json") }
 // AllowPath is the user allowlist file (extra MITM hosts).
 func AllowPath() string { return filepath.Join(Dir(), "allow.txt") }
 
+// ProxyStatePath stores the snapshot of prior system-proxy settings (for revert).
+func ProxyStatePath() string { return filepath.Join(Dir(), "proxy-state.json") }
+
+// DaemonPath stores the running daemon's pid/port.
+func DaemonPath() string { return filepath.Join(Dir(), "daemon.json") }
+
 func Load() Config {
 	var c Config
 	b, err := os.ReadFile(path())
