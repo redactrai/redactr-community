@@ -14,7 +14,9 @@ type compiledPattern struct {
 	re   *regexp.Regexp
 }
 
-// RegexScanner detects sensitive data using regex patterns only (no ML, no entropy).
+// RegexScanner detects sensitive data using regex patterns and a heuristic Shannon-entropy
+// pass (still no ML). Entropy findings that overlap a regex finding are suppressed to
+// avoid double-reporting the same secret.
 type RegexScanner struct {
 	patterns []compiledPattern
 }
@@ -59,6 +61,11 @@ func DefaultPatterns() []PatternDef {
 		{Name: "CONNECTION-STRING", Pattern: `(?i)(mongodb|postgres|mysql|redis|amqp):\/\/[^\s]+`},
 		{Name: "GENERIC-SECRET", Pattern: `(?i)(password|secret|token|api_key|apikey)\s*[=:]\s*['"]?[A-Za-z0-9/+=\-_]{8,}['"]?`},
 		{Name: "GENERIC-SECRET", Pattern: `(?i)(password|passwd|pwd)\s*[=:]\s*['"]?[^\s'"]{4,}['"]?`},
+		// .env-style assignments where the KEY name signals a secret, including
+		// prefixes/suffixes (DATABASE_PASSWORD, STRIPE_API_KEY, *_ACCESS_KEY,
+		// CLIENT_SECRET, *_TOKEN). Redacts the whole KEY=value so the AI never
+		// sees the value when a tool reads your .env/credentials files.
+		{Name: "ENV-SECRET", Pattern: `(?i)\b\w*(?:secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|passphrase|password|passwd|credential)s?\w*\s*[=:]\s*['"]?[^\s'"]{6,}['"]?`},
 		{Name: "IP-ADDRESS", Pattern: `\b(?:\d{1,3}\.){3}\d{1,3}\b`},
 		// IPv6: full form only (8 groups) — shortened forms match random hex
 		{Name: "IPV6-ADDRESS", Pattern: `\b[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){7}\b`},
@@ -103,6 +110,8 @@ func DefaultPatterns() []PatternDef {
 }
 
 // Scan detects all sensitive findings in text and returns a ScanResult.
+// It runs all regex patterns first, then appends entropy findings that do not
+// overlap any regex finding (byte ranges [Start,End) intersect).
 func (s *RegexScanner) Scan(text string) (*ScanResult, error) {
 	var findings []Finding
 
@@ -119,5 +128,44 @@ func (s *RegexScanner) Scan(text string) (*ScanResult, error) {
 		}
 	}
 
-	return &ScanResult{Findings: findings}, nil
+	// Append entropy findings that do not overlap any regex finding.
+	for _, ef := range entropyFindings(text) {
+		overlaps := false
+		for _, rf := range findings {
+			if ef.Start < rf.End && rf.Start < ef.End {
+				overlaps = true
+				break
+			}
+		}
+		if !overlaps {
+			findings = append(findings, ef)
+		}
+	}
+
+	// Catch-all labels yield to a more specific finding when they overlap one,
+	// so e.g. AWS_ACCESS_KEY_ID=AKIA... keeps the precise AWS-ACCESS-KEY label
+	// instead of the generic wrapper. A catch-all is kept only where nothing more
+	// specific matched (e.g. DATABASE_PASSWORD=plainvalue).
+	generic := map[string]bool{"ENV-SECRET": true, "GENERIC-SECRET": true}
+	var kept []Finding
+	for _, fd := range findings {
+		if generic[fd.Label] {
+			swallowed := false
+			for _, other := range findings {
+				if generic[other.Label] {
+					continue
+				}
+				if fd.Start < other.End && other.Start < fd.End {
+					swallowed = true
+					break
+				}
+			}
+			if swallowed {
+				continue
+			}
+		}
+		kept = append(kept, fd)
+	}
+
+	return &ScanResult{Findings: kept}, nil
 }
