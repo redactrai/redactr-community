@@ -2,11 +2,14 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -16,6 +19,7 @@ import (
 	"github.com/redactrai/redactr-community/internal/config"
 	"github.com/redactrai/redactr-community/internal/proxy"
 	"github.com/redactrai/redactr-community/internal/scanner"
+	"github.com/redactrai/redactr-community/internal/systemproxy"
 	"github.com/redactrai/redactr-community/internal/telemetry"
 )
 
@@ -46,6 +50,8 @@ func main() {
 		runShell()
 	case "start":
 		runStart()
+	case "__daemon":
+		runDaemon()
 	default:
 		fmt.Println("usage: redactr-community [start | run <command> | shell | ca | telemetry on|off|status]")
 	}
@@ -82,6 +88,11 @@ func newProxy() (*proxy.Proxy, string, string) {
 		os.Exit(1)
 	}
 	return p, cert, key
+}
+
+// quietLogs suppresses verbose slog output — used by the daemon subprocess.
+func quietLogs() {
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
 // proxyRunning reports whether something is already listening on the proxy port.
@@ -179,4 +190,29 @@ func runShell() {
 	if stop != nil {
 		close(stop)
 	}
+}
+
+// runDaemon is the hidden handler invoked by daemon.Start — runs the proxy in the
+// background and reverts the system proxy on termination.
+func runDaemon() {
+	port := 8080
+	for i, a := range os.Args {
+		if a == "--port" && i+1 < len(os.Args) {
+			if p, err := strconv.Atoi(os.Args[i+1]); err == nil {
+				port = p
+			}
+		}
+	}
+	quietLogs()
+	p, _, _ := newProxy()
+	if _, err := p.Start(port); err != nil {
+		fmt.Fprintln(os.Stderr, "daemon proxy error:", err)
+		os.Exit(1)
+	}
+	// On termination, revert the system proxy so the machine keeps working.
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	<-sig
+	_ = systemproxy.Revert(config.ProxyStatePath())
+	os.Exit(0)
 }
