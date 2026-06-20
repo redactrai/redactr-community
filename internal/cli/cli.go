@@ -37,6 +37,8 @@ func ProxyEnv(addr, caPath string) []string {
 		"HTTPS_PROXY=" + addr,
 		"HTTP_PROXY=" + addr,
 		"NODE_EXTRA_CA_CERTS=" + caPath, // Node-based tools (e.g. Claude Code) trust the local CA
+		"SSL_CERT_FILE=" + caPath,       // Rust/reqwest (e.g. codex) and others read this
+		"SSL_CERT_DIR=",                 // empty -> force use of SSL_CERT_FILE only
 	}
 }
 

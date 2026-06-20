@@ -20,6 +20,8 @@ func TestProxyEnv(t *testing.T) {
 		"HTTPS_PROXY=http://127.0.0.1:8080",
 		"HTTP_PROXY=http://127.0.0.1:8080",
 		"NODE_EXTRA_CA_CERTS=/home/u/.redactr-community/ca.pem",
+		"SSL_CERT_FILE=/home/u/.redactr-community/ca.pem",
+		"SSL_CERT_DIR=",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("ProxyEnv missing %q; got %v", want, env)

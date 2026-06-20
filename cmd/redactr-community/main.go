@@ -67,8 +67,10 @@ func main() {
 		runStatus()
 	case "doctor":
 		runDoctor()
+	case "allow":
+		runAllow(os.Args[2:])
 	default:
-		fmt.Println("usage: redactr-community [start | run <command> | shell | ca | enable | disable | status | doctor | telemetry on|off|status]")
+		fmt.Println("usage: redactr-community [start | run <command> | shell | ca | allow <host> | enable | disable | status | doctor | telemetry on|off|status]")
 	}
 }
 
@@ -167,12 +169,28 @@ func runStart() {
 
 // runRun ensures the proxy is up, then launches the given command in a shell that
 // already carries the proxy environment (e.g. `redactr-community run claude`).
+// For GUI tools, it prints an informational note instead of injecting proxy env
+// (GUI apps cannot inherit terminal env vars; the system proxy daemon protects them).
 func runRun(args []string) {
 	if len(args) == 0 {
 		fmt.Println("usage: redactr-community run <command> [args...]    e.g. redactr-community run claude")
 		return
 	}
 	cli.MaybeShowFirstRun()
+	if cli.IsGUI(args[0]) {
+		fmt.Fprintf(os.Stderr, "note: %s is a GUI tool — env vars don't reach GUI apps.\n", args[0])
+		fmt.Fprintln(os.Stderr, "      GUI tools are protected by the system proxy when the daemon is enabled.")
+		fmt.Fprintln(os.Stderr, "      Ensure it's on with: redactr-community enable")
+		sh := os.Getenv("SHELL")
+		if sh == "" {
+			sh = "/bin/sh"
+		}
+		c := exec.Command(sh, "-c", strings.Join(args, " "))
+		c.Env = os.Environ()
+		c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
+		_ = c.Run()
+		return
+	}
 	cert, _ := caPaths()
 	addr, stop := ensureProxy()
 	sh := os.Getenv("SHELL")
@@ -363,5 +381,33 @@ func runDoctor() {
 		} else {
 			fmt.Printf("  %-30s reached but header absent\n", host)
 		}
+	}
+}
+
+// runAllow appends each host argument to the user allowlist file so the daemon
+// MITM-decrypts those hosts on next restart.
+func runAllow(hosts []string) {
+	if len(hosts) == 0 {
+		fmt.Println("usage: redactr-community allow <host> [host ...]")
+		fmt.Println("       e.g. redactr-community allow api.example.com")
+		return
+	}
+	path := config.AllowPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		fmt.Fprintln(os.Stderr, "allow: cannot create config dir:", err)
+		os.Exit(1)
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "allow: cannot open allowlist:", err)
+		os.Exit(1)
+	}
+	defer f.Close()
+	for _, h := range hosts {
+		if _, err := fmt.Fprintln(f, h); err != nil {
+			fmt.Fprintln(os.Stderr, "allow: write error:", err)
+			os.Exit(1)
+		}
+		fmt.Printf("added %s to the allowlist — restart the daemon (redactr-community disable && enable) to apply.\n", h)
 	}
 }
