@@ -1,10 +1,15 @@
 package main
 
 import (
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -14,9 +19,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/redactrai/redactr-community/internal/catrust"
 	"github.com/redactrai/redactr-community/internal/certgen"
 	"github.com/redactrai/redactr-community/internal/cli"
 	"github.com/redactrai/redactr-community/internal/config"
+	"github.com/redactrai/redactr-community/internal/daemon"
 	"github.com/redactrai/redactr-community/internal/proxy"
 	"github.com/redactrai/redactr-community/internal/scanner"
 	"github.com/redactrai/redactr-community/internal/systemproxy"
@@ -52,8 +59,16 @@ func main() {
 		runStart()
 	case "__daemon":
 		runDaemon()
+	case "enable":
+		runEnable()
+	case "disable":
+		runDisable()
+	case "status":
+		runStatus()
+	case "doctor":
+		runDoctor()
 	default:
-		fmt.Println("usage: redactr-community [start | run <command> | shell | ca | telemetry on|off|status]")
+		fmt.Println("usage: redactr-community [start | run <command> | shell | ca | enable | disable | status | doctor | telemetry on|off|status]")
 	}
 }
 
@@ -215,4 +230,138 @@ func runDaemon() {
 	<-sig
 	_ = systemproxy.Revert(config.ProxyStatePath())
 	os.Exit(0)
+}
+
+// runEnable trusts the CA, starts the daemon, and sets the system proxy.
+func runEnable() {
+	cert, _ := caPaths()
+	// ensure CA exists (newProxy creates it if missing)
+	if _, err := os.Stat(cert); err != nil {
+		_, _, _ = newProxy()
+	}
+	if ok, _ := catrust.IsTrusted(cert); !ok {
+		fmt.Println("Trusting the local CA (you may be prompted for your password)…")
+		if err := catrust.Install(cert); err != nil {
+			fmt.Fprintln(os.Stderr, "CA trust failed:", err)
+			os.Exit(1)
+		}
+	}
+	if err := daemon.Start(8080); err != nil {
+		fmt.Fprintln(os.Stderr, "daemon start failed:", err)
+		os.Exit(1)
+	}
+	if err := systemproxy.Set("127.0.0.1", 8080, config.ProxyStatePath()); err != nil {
+		fmt.Fprintln(os.Stderr, "system proxy set failed:", err)
+		os.Exit(1)
+	}
+	fmt.Println("✓ Redactr is on. Every AI tool (terminal and GUI) is now protected.")
+	fmt.Println("  Turn it off any time with: redactr-community disable")
+}
+
+// runDisable reverts the system proxy, stops the daemon, and optionally untrusts the CA.
+func runDisable() {
+	untrust := false
+	for _, a := range os.Args[2:] {
+		if a == "--untrust" {
+			untrust = true
+		}
+	}
+	_ = systemproxy.Revert(config.ProxyStatePath())
+	_ = daemon.Stop()
+	if untrust {
+		cert, _ := caPaths()
+		_ = catrust.Remove(cert)
+	}
+	fmt.Println("✓ Redactr is off. System proxy reverted.")
+}
+
+// runStatus prints daemon, CA trust, and system proxy state.
+func runStatus() {
+	cert, _ := caPaths()
+
+	running, info := daemon.IsRunning()
+	if running {
+		fmt.Printf("daemon:       running (pid %d, port %d)\n", info.PID, info.Port)
+	} else {
+		fmt.Println("daemon:       not running")
+	}
+
+	trusted, err := catrust.IsTrusted(cert)
+	if err != nil {
+		fmt.Printf("CA trusted:   unknown (%v)\n", err)
+	} else if trusted {
+		fmt.Println("CA trusted:   yes")
+	} else {
+		fmt.Println("CA trusted:   no")
+	}
+
+	set, err := systemproxy.IsSet("127.0.0.1", 8080)
+	if err != nil {
+		fmt.Printf("system proxy: unknown (%v)\n", err)
+	} else if set {
+		fmt.Println("system proxy: set → 127.0.0.1:8080")
+	} else {
+		fmt.Println("system proxy: not set")
+	}
+
+	// Stale-state guard: proxy points at a dead port.
+	if set && !running {
+		fmt.Println()
+		fmt.Println("WARNING: The system proxy is set but the Redactr daemon is NOT running.")
+		fmt.Println("         All proxied traffic will fail until you restore internet access.")
+		fmt.Println("         Run:  redactr-community disable")
+	}
+}
+
+// runDoctor runs status checks plus a live interception probe through the proxy.
+func runDoctor() {
+	runStatus()
+
+	running, _ := daemon.IsRunning()
+	if !running {
+		return
+	}
+
+	cert, _ := caPaths()
+
+	// Build an x509 pool that trusts our local CA.
+	pool := x509.NewCertPool()
+	if b, err := os.ReadFile(cert); err == nil {
+		blk, _ := pem.Decode(b)
+		if blk != nil {
+			if c, err := x509.ParseCertificate(blk.Bytes); err == nil {
+				pool.AddCert(c)
+			}
+		}
+	}
+
+	proxyURL, _ := url.Parse("http://127.0.0.1:8080")
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			Proxy: http.ProxyURL(proxyURL),
+			TLSClientConfig: &tls.Config{
+				RootCAs: pool,
+			},
+		},
+	}
+
+	fmt.Println()
+	fmt.Println("live interception probe:")
+	for _, host := range []string{"api.anthropic.com", "api.openai.com"} {
+		target := "https://" + host + "/"
+		req, _ := http.NewRequest(http.MethodHead, target, nil)
+		resp, err := client.Do(req)
+		if err != nil {
+			fmt.Printf("  %-30s could not verify (offline?): %v\n", host, err)
+			continue
+		}
+		_ = resp.Body.Close()
+		hdr := resp.Header.Get("X-Redactr-Status")
+		if hdr != "" {
+			fmt.Printf("  %-30s intercepted ✓ (X-Redactr-Status: %s)\n", host, hdr)
+		} else {
+			fmt.Printf("  %-30s reached but header absent\n", host)
+		}
+	}
 }
